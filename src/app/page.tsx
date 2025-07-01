@@ -108,7 +108,7 @@ export default function ChirpShotGame() {
     let pos = {...startPos};
     let vel = {...startVel};
     const points = [];
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 50; i++) {
         vel.y += GRAVITY;
         pos.x += vel.x;
         pos.y += vel.y;
