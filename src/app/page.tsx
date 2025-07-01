@@ -98,7 +98,7 @@ export default function ChirpShotGame() {
   }
 
   const gameLoop = useCallback(() => {
-    // 1. Update bird velocity & position
+    // 1. Update bird physics
     birdVelocity.current.y += GRAVITY;
     let nextBirdPos = {
       x: birdPosition.x + birdVelocity.current.x,
@@ -106,31 +106,72 @@ export default function ChirpShotGame() {
     };
     birdPath.current.push(nextBirdPos);
 
-    // 2. Update blocks and pigs based on their velocity
-    const updatePhysics = (items: (GameBlock | GamePig)[]) => {
-      return items.map(item => {
-          if (item.destroyed) {
-              let nextVx = item.vx * 0.99; // friction
-              let nextVy = item.vy + GRAVITY * 0.8;
-              let nextX = item.x + nextVx;
-              let nextY = item.y + nextVy;
-              
-              const itemHeight = 'height' in item ? item.height : PIG_RADIUS * 2;
-              if (nextY + itemHeight > GAME_HEIGHT - GROUND_HEIGHT) {
-                  nextY = GAME_HEIGHT - GROUND_HEIGHT - itemHeight;
-                  nextVy = -nextVy * 0.3; // bounce
-                  nextVx *= 0.8;
-              }
+    // 2. Update block physics (only for destroyed blocks)
+    let nextBlocks = blocks.map(block => {
+      if (!block.destroyed) return block;
+      let nextVx = block.vx * 0.99; // friction
+      let nextVy = block.vy + GRAVITY * 0.8;
+      let nextX = block.x + nextVx;
+      let nextY = block.y + nextVy;
 
-              return {...item, x: nextX, y: nextY, vx: nextVx, vy: nextVy};
+      if (nextY + block.height > GAME_HEIGHT - GROUND_HEIGHT) {
+        nextY = GAME_HEIGHT - GROUND_HEIGHT - block.height;
+        nextVy = -nextVy * 0.3; // bounce
+        nextVx *= 0.8;
+      }
+      return { ...block, x: nextX, y: nextY, vx: nextVx, vy: nextVy };
+    });
+
+    // 3. Update pig physics
+    let nextPigs = pigs.map(pig => {
+      let currentPig = { ...pig };
+
+      // Physics for destroyed pigs (they just fly away)
+      if (currentPig.destroyed) {
+        currentPig.vx *= 0.99;
+        currentPig.vy += GRAVITY;
+        currentPig.x += currentPig.vx;
+        currentPig.y += currentPig.vy;
+        return currentPig;
+      }
+      
+      // Physics for active pigs
+      currentPig.vy += GRAVITY;
+      let nextY = currentPig.y + currentPig.vy;
+      let nextX = currentPig.x + currentPig.vx;
+
+      const pigBottom = nextY + PIG_RADIUS * 2;
+      const pigLeft = nextX;
+      const pigRight = nextX + PIG_RADIUS * 2;
+
+      // Check for ground collision
+      if (pigBottom > GAME_HEIGHT - GROUND_HEIGHT) {
+        nextY = GAME_HEIGHT - GROUND_HEIGHT - PIG_RADIUS * 2;
+        currentPig.vy = 0;
+      }
+
+      // Check for block collision
+      for (const block of nextBlocks) {
+        if (block.destroyed) continue;
+        const blockTop = block.y;
+        const blockLeft = block.x;
+        const blockRight = block.x + block.width;
+        
+        if (pigRight > blockLeft && pigLeft < blockRight) {
+          if (currentPig.y + PIG_RADIUS * 2 <= blockTop && pigBottom >= blockTop) {
+            nextY = blockTop - PIG_RADIUS * 2;
+            currentPig.vy = 0;
+            break; 
           }
-          return item;
-      });
-    }
-    let nextBlocks = updatePhysics(blocks) as GameBlock[];
-    let nextPigs = updatePhysics(pigs) as GamePig[];
+        }
+      }
+      
+      currentPig.x = nextX;
+      currentPig.y = nextY;
+      return currentPig;
+    });
 
-    // 3. Check for collisions
+    // 4. Check for collisions
     const birdLeft = nextBirdPos.x - BIRD_RADIUS;
     const birdRight = nextBirdPos.x + BIRD_RADIUS;
     const birdTop = nextBirdPos.y - BIRD_RADIUS;
@@ -148,8 +189,8 @@ export default function ChirpShotGame() {
             if (!block.destroyed) setScore(s => s + 10);
             const newBlock = {
                 ...block, destroyed: true,
-                vx: (block.vx || 0) + birdVelocity.current.x * 0.5,
-                vy: (block.vy || 0) + birdVelocity.current.y * 0.5
+                vx: birdVelocity.current.x * 0.5,
+                vy: birdVelocity.current.y * 0.5
             };
             birdVelocity.current.x *= 0.4;
             birdVelocity.current.y *= -0.4;
@@ -197,7 +238,7 @@ export default function ChirpShotGame() {
     }
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [birdPosition, blocks, pigs, birdsRemaining, currentLevel.bird, score]);
+  }, [birdPosition, blocks, pigs, birdsRemaining, currentLevel.bird]);
 
   useEffect(() => {
     if (gameState === "flying") {
