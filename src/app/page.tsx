@@ -94,9 +94,9 @@ export default function ChirpShotGame() {
         birdBottom > targetTop &&
         birdTop < targetBottom
       ) {
-        target.destroyed = true;
-        setScore((s) => s + 100);
         collisionOccurred = true;
+        setScore((s) => s + 100);
+        return { ...target, destroyed: true };
       }
       return target;
     });
@@ -111,7 +111,7 @@ export default function ChirpShotGame() {
         if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
       }
     }
-  }, [targets]);
+  }, [targets, setGameState, setScore]);
 
   const gameLoop = useCallback(() => {
     birdVelocity.current.y += GRAVITY;
@@ -151,7 +151,7 @@ export default function ChirpShotGame() {
     if (gameState !== "ready") return;
 
     const angleInRadians = (-launchAngle * Math.PI) / 180;
-    const powerFactor = launchPower / 25;
+    const powerFactor = launchPower / 5;
     birdVelocity.current = {
       x: Math.cos(angleInRadians) * powerFactor,
       y: Math.sin(angleInRadians) * powerFactor,
