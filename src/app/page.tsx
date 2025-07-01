@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { levels, Level, Target } from "@/lib/levels";
+import { levels, Level, Block, Pig } from "@/lib/levels";
 import { getAiSuggestion } from "./actions";
 import type { SuggestOptimalLaunchPositionsOutput } from "@/ai/flows/suggest-optimal-launch-positions";
 
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
-import { BirdIcon, TargetBlock } from "@/components/icons";
+import { BirdIcon, TargetBlock, PigIcon } from "@/components/icons";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
   RotateCw,
@@ -25,11 +25,17 @@ const GAME_WIDTH = 1000;
 const GAME_HEIGHT = 500;
 const GROUND_HEIGHT = 50;
 const BIRD_RADIUS = 16;
+const PIG_RADIUS = 20;
 const GRAVITY = 0.2;
 const MAX_DRAG_DISTANCE = 90;
 const POWER_MULTIPLIER = 0.2;
 
-type GameTarget = Target & {
+type GameBlock = Block & {
+  vx: number;
+  vy: number;
+};
+
+type GamePig = Pig & {
   vx: number;
   vy: number;
 };
@@ -49,9 +55,13 @@ export default function ChirpShotGame() {
   const [birdPosition, setBirdPosition] = useState(currentLevel.bird);
   const birdVelocity = useRef({ x: 0, y: 0 });
   const birdPath = useRef<Array<{x: number, y: number}>>([]);
+  const [birdsRemaining, setBirdsRemaining] = useState(currentLevel.birdCount);
 
-  const [targets, setTargets] = useState<GameTarget[]>(
-    currentLevel.targets.map(t => ({ ...t, vx: 0, vy: 0 }))
+  const [blocks, setBlocks] = useState<GameBlock[]>(
+    currentLevel.blocks.map(t => ({ ...t, vx: 0, vy: 0 }))
+  );
+  const [pigs, setPigs] = useState<GamePig[]>(
+    currentLevel.pigs.map(p => ({ ...p, vx: 0, vy: 0 }))
   );
   
   const [isDragging, setIsDragging] = useState(false);
@@ -71,8 +81,10 @@ export default function ChirpShotGame() {
     if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     const newLevel = levels[levelIdx];
     setCurrentLevel(newLevel);
-    setTargets(newLevel.targets.map(t => ({ ...t, vx: 0, vy: 0 })));
+    setBlocks(newLevel.blocks.map(t => ({ ...t, vx: 0, vy: 0 })));
+    setPigs(newLevel.pigs.map(p => ({ ...p, vx: 0, vy: 0 })));
     setBirdPosition(newLevel.bird);
+    setBirdsRemaining(newLevel.birdCount);
     birdVelocity.current = { x: 0, y: 0 };
     birdPath.current = [];
     setGameState("ready");
@@ -84,6 +96,13 @@ export default function ChirpShotGame() {
   useEffect(() => {
     resetLevel(levelIndex);
   }, [levelIndex, resetLevel]);
+  
+  const prepareNextShot = () => {
+    birdPath.current = [];
+    setBirdPosition(currentLevel.bird);
+    birdVelocity.current = { x: 0, y: 0 };
+    setGameState("ready");
+  }
 
   const calculateTrajectoryPoints = (startPos: {x: number, y: number}, startVel: {x: number, y: number}) => {
     let pos = {...startPos};
@@ -110,75 +129,98 @@ export default function ChirpShotGame() {
     };
     birdPath.current.push(nextBirdPos);
 
-    // 2. Update targets based on their velocity
-    let nextTargets = targets.map(target => {
-        if (target.destroyed) {
-            let nextVx = target.vx * 0.99; // friction
-            let nextVy = target.vy + GRAVITY * 0.8;
-            let nextX = target.x + nextVx;
-            let nextY = target.y + nextVy;
-            
-            if (nextY + target.height > GAME_HEIGHT - GROUND_HEIGHT) {
-                nextY = GAME_HEIGHT - GROUND_HEIGHT - target.height;
-                nextVy = -nextVy * 0.3; // bounce
-                nextVx *= 0.8;
-            }
+    // 2. Update blocks and pigs based on their velocity
+    const updatePhysics = (items: (GameBlock | GamePig)[]) => {
+      return items.map(item => {
+          if (item.destroyed) {
+              let nextVx = item.vx * 0.99; // friction
+              let nextVy = item.vy + GRAVITY * 0.8;
+              let nextX = item.x + nextVx;
+              let nextY = item.y + nextVy;
+              
+              const itemHeight = 'height' in item ? item.height : PIG_RADIUS * 2;
+              if (nextY + itemHeight > GAME_HEIGHT - GROUND_HEIGHT) {
+                  nextY = GAME_HEIGHT - GROUND_HEIGHT - itemHeight;
+                  nextVy = -nextVy * 0.3; // bounce
+                  nextVx *= 0.8;
+              }
 
-            return {...target, x: nextX, y: nextY, vx: nextVx, vy: nextVy};
-        }
-        return target;
-    });
-    
-    // 3. Check for collisions and update velocities
-    nextTargets = nextTargets.map(target => {
-        if (target.destroyed && Math.abs(target.vx) < 0.1 && Math.abs(target.vy) < 0.1) return target;
-        
-        const birdLeft = nextBirdPos.x - BIRD_RADIUS;
-        const birdRight = nextBirdPos.x + BIRD_RADIUS;
-        const birdTop = nextBirdPos.y - BIRD_RADIUS;
-        const birdBottom = nextBirdPos.y + BIRD_RADIUS;
+              return {...item, x: nextX, y: nextY, vx: nextVx, vy: nextVy};
+          }
+          return item;
+      });
+    }
+    let nextBlocks = updatePhysics(blocks) as GameBlock[];
+    let nextPigs = updatePhysics(pigs) as GamePig[];
 
-        const targetLeft = target.x;
-        const targetRight = target.x + target.width;
-        const targetTop = target.y;
-        const targetBottom = target.y + target.height;
+    // 3. Check for collisions
+    const birdLeft = nextBirdPos.x - BIRD_RADIUS;
+    const birdRight = nextBirdPos.x + BIRD_RADIUS;
+    const birdTop = nextBirdPos.y - BIRD_RADIUS;
+    const birdBottom = nextBirdPos.y + BIRD_RADIUS;
 
-        if (birdRight > targetLeft && birdLeft < targetRight && birdBottom > targetTop && birdTop < targetBottom) {
-            if (!target.destroyed) {
-                setScore(s => s + 100);
-            }
+    // Bird with Blocks
+    nextBlocks = nextBlocks.map(block => {
+        if (block.destroyed) return block;
+        const blockLeft = block.x;
+        const blockRight = block.x + block.width;
+        const blockTop = block.y;
+        const blockBottom = block.y + block.height;
 
-            const newTarget = {
-                ...target,
-                destroyed: true,
-                vx: (target.vx || 0) + birdVelocity.current.x * 0.5,
-                vy: (target.vy || 0) + birdVelocity.current.y * 0.5
+        if (birdRight > blockLeft && birdLeft < blockRight && birdBottom > blockTop && birdTop < blockBottom) {
+            if (!block.destroyed) setScore(s => s + 10);
+            const newBlock = {
+                ...block, destroyed: true,
+                vx: (block.vx || 0) + birdVelocity.current.x * 0.5,
+                vy: (block.vy || 0) + birdVelocity.current.y * 0.5
             };
-            
             birdVelocity.current.x *= 0.4;
             birdVelocity.current.y *= -0.4;
-
-            return newTarget;
+            return newBlock;
         }
-        return target;
+        return block;
+    });
+
+    // Bird with Pigs
+    nextPigs = nextPigs.map(pig => {
+      if (pig.destroyed) return pig;
+      const pigCenterX = pig.x + PIG_RADIUS;
+      const pigCenterY = pig.y + PIG_RADIUS;
+      const dist = Math.sqrt((nextBirdPos.x - pigCenterX)**2 + (nextBirdPos.y - pigCenterY)**2);
+
+      if (dist < BIRD_RADIUS + PIG_RADIUS) {
+          setScore(s => s + 500);
+          birdVelocity.current.x *= 0.2;
+          birdVelocity.current.y *= -0.2;
+          return {...pig, destroyed: true, vx: birdVelocity.current.x, vy: birdVelocity.current.y};
+      }
+      return pig;
     });
     
     setBirdPosition(nextBirdPos);
-    setTargets(nextTargets);
+    setBlocks(nextBlocks);
+    setPigs(nextPigs);
     
-    const allTargetsDestroyed = nextTargets.every(t => t.destroyed);
-    if(allTargetsDestroyed && nextTargets.length > 0) {
+    const allPigsDestroyed = nextPigs.every(p => p.destroyed);
+    if(allPigsDestroyed && nextPigs.length > 0) {
         setGameState("success");
         return;
     }
+    
+    const shotOver = nextBirdPos.y > GAME_HEIGHT - GROUND_HEIGHT - BIRD_RADIUS || nextBirdPos.x > GAME_WIDTH || nextBirdPos.x < 0;
 
-    if (nextBirdPos.y > GAME_HEIGHT - GROUND_HEIGHT - BIRD_RADIUS || nextBirdPos.x > GAME_WIDTH || nextBirdPos.x < 0) {
-      setGameState(allTargetsDestroyed ? "success" : "fail");
+    if (shotOver) {
+      if (birdsRemaining > 1) {
+        setBirdsRemaining(b => b - 1);
+        prepareNextShot();
+      } else {
+        setGameState(allPigsDestroyed ? "success" : "fail");
+      }
       return;
     }
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [birdPosition, targets]);
+  }, [birdPosition, blocks, pigs, birdsRemaining, currentLevel.bird]);
 
   useEffect(() => {
     if (gameState === "flying") {
@@ -190,7 +232,7 @@ export default function ChirpShotGame() {
   }, [gameState, gameLoop]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (gameState !== 'ready') return;
+    if (gameState !== 'ready' || birdsRemaining <= 0) return;
     const gameArea = gameAreaRef.current?.getBoundingClientRect();
     if (!gameArea) return;
 
@@ -302,6 +344,14 @@ export default function ChirpShotGame() {
     }
     return path;
   }
+  
+  const BirdIndicator = () => {
+    const birdIcons = [];
+    for(let i = 0; i < birdsRemaining -1; i++){
+        birdIcons.push(<div key={i} className="mr-2"><BirdIcon /></div>);
+    }
+    return <div className="absolute top-4 left-4 flex">{birdIcons}</div>
+  }
 
   return (
     <main className="container mx-auto p-4 min-h-screen flex flex-col items-center justify-center">
@@ -352,15 +402,17 @@ export default function ChirpShotGame() {
             <svg width={GAME_WIDTH} height={GAME_HEIGHT} className="absolute top-0 left-0 pointer-events-none">
               {isDragging && (
                 <>
-                  <line x1={currentLevel.bird.x - 10} y1={GAME_HEIGHT - GROUND_HEIGHT - 35} x2={birdPosition.x} y2={birdPosition.y} stroke="#4f2600" strokeWidth="5" />
-                  <line x1={currentLevel.bird.x + 10} y1={GAME_HEIGHT - GROUND_HEIGHT - 35} x2={birdPosition.x} y2={birdPosition.y} stroke="#291500" strokeWidth="5" />
+                  <line x1={currentLevel.bird.x - 10} y1={currentLevel.bird.y - 10} x2={birdPosition.x} y2={birdPosition.y} stroke="#4f2600" strokeWidth="5" />
+                  <line x1={currentLevel.bird.x + 10} y1={currentLevel.bird.y - 10} x2={birdPosition.x} y2={birdPosition.y} stroke="#291500" strokeWidth="5" />
                 </>
               )}
               <path d={getPathFromPoints(birdPath.current)} stroke="rgba(255,255,255,0.3)" strokeWidth="2" fill="none" />
               <path d={getPathFromPoints(trajectoryPreview)} stroke="rgba(0,0,0,0.5)" strokeWidth="2" fill="none" strokeDasharray="5 10" />
             </svg>
+            
+            <BirdIndicator />
 
-            {gameState !== "success" && gameState !== "flying" && (
+            {gameState === "ready" && birdsRemaining > 0 && (
                 <div style={{ position: "absolute", left: birdPosition.x - BIRD_RADIUS, top: birdPosition.y - BIRD_RADIUS, pointerEvents: 'none' }}>
                   <BirdIcon />
                 </div>
@@ -371,22 +423,28 @@ export default function ChirpShotGame() {
                 </div>
             )}
 
-            {targets.map((target) => (
+            {blocks.map((block) => (
               <div
-                key={target.id}
+                key={block.id}
                 className="absolute"
                 style={{
-                  left: target.x,
-                  top: target.y,
-                  width: target.width,
-                  height: target.height,
+                  left: block.x,
+                  top: block.y,
+                  width: block.width,
+                  height: block.height,
                   transition: 'opacity 0.5s',
-                  opacity: target.destroyed ? 0.8 : 1,
+                  opacity: block.destroyed ? 0.8 : 1,
                   pointerEvents: 'none'
                 }}
               >
-                <TargetBlock destroyed={target.destroyed} />
+                <TargetBlock destroyed={block.destroyed} />
               </div>
+            ))}
+            
+            {pigs.map((pig) => (
+                <div key={pig.id} className="absolute" style={{ left: pig.x, top: pig.y, pointerEvents: 'none' }}>
+                    <PigIcon destroyed={pig.destroyed} />
+                </div>
             ))}
             
             {aiSuggestion?.suggestedPositions.map((pos, i) => (
