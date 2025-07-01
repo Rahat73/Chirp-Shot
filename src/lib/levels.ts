@@ -37,7 +37,7 @@ export const levels: Level[] = [
         { id: 3, x: 640, y: 300, width: 20, height: 50, destroyed: false },
     ],
     birdCount: 3,
-    bird: { x: 100, y: 350 },
+    bird: { x: 150, y: 350 },
   },
   {
     id: 2,
@@ -54,7 +54,7 @@ export const levels: Level[] = [
       { id: 5, x: 670, y: 330, width: 130, height: 20, destroyed: false },
     ],
     birdCount: 4,
-    bird: { x: 100, y: 350 },
+    bird: { x: 150, y: 350 },
   },
   {
     id: 3,
@@ -80,6 +80,6 @@ export const levels: Level[] = [
       { id: 9, x: 620, y: 280, width: 280, height: 20, destroyed: false },
     ],
     birdCount: 4,
-    bird: { x: 100, y: 350 },
+    bird: { x: 150, y: 350 },
   },
 ];
