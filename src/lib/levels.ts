@@ -58,11 +58,11 @@ export const levels: Level[] = [
   },
   {
     id: 3,
-    structure: "Three pigs are inside a complex castle-like structure. Bottom pigs at (650, 410) and (850, 410). Top pig at (750, 270). The structure is made of vertical and horizontal blocks creating rooms.",
+    structure: "Three pigs are inside a complex castle-like structure. Bottom pigs at (650, 410) and (850, 410). Top pig at (750, 240). The structure is made of vertical and horizontal blocks creating rooms.",
     pigs: [
         { id: 1, x: 650, y: 410, destroyed: false },
         { id: 2, x: 850, y: 410, destroyed: false },
-        { id: 3, x: 750, y: 270, destroyed: false },
+        { id: 3, x: 750, y: 240, destroyed: false },
     ],
     blocks: [
       // Left Tower
