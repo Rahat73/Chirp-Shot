@@ -36,7 +36,7 @@ export default function ChirpShotGame() {
   const [levelIndex, setLevelIndex] = useState(0);
   const [currentLevel, setCurrentLevel] = useState<Level>(levels[levelIndex]);
   const [score, setScore] = useState(0);
-  const [gameState, setGameState] = useState<"ready" | "flying" | "success" | "fail">("ready");
+  const [gameState, setGameState] = useState<"ready" | "flying" | "settling" | "success" | "fail">("ready");
   
   const [birdPosition, setBirdPosition] = useState(currentLevel.bird);
   const birdVelocity = useRef({ x: 0, y: 0 });
@@ -54,6 +54,7 @@ export default function ChirpShotGame() {
   const [trajectoryPreview, setTrajectoryPreview] = useState<Array<{x: number, y: number}>>([]);
 
   const animationFrameId = useRef<number>();
+  const settleTimer = useRef<number>(0);
 
   const resetLevel = useCallback((levelIdx: number) => {
     if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
@@ -98,13 +99,16 @@ export default function ChirpShotGame() {
   }
 
   const gameLoop = useCallback(() => {
-    // 1. Update bird physics
-    birdVelocity.current.y += GRAVITY;
-    let nextBirdPos = {
-      x: birdPosition.x + birdVelocity.current.x,
-      y: birdPosition.y + birdVelocity.current.y,
-    };
-    birdPath.current.push(nextBirdPos);
+    // 1. Update bird physics (if flying)
+    let nextBirdPos = { ...birdPosition };
+    if (gameState === 'flying') {
+      birdVelocity.current.y += GRAVITY;
+      nextBirdPos = {
+        x: birdPosition.x + birdVelocity.current.x,
+        y: birdPosition.y + birdVelocity.current.y,
+      };
+      birdPath.current.push(nextBirdPos);
+    }
 
     // 2. Update block physics (including gravity for non-destroyed blocks)
     let updatedBlocks = blocks.map(block => {
@@ -208,77 +212,101 @@ export default function ChirpShotGame() {
       return currentPig;
     });
 
-    // 4. Check for bird collisions
-    const birdLeft = nextBirdPos.x - BIRD_RADIUS;
-    const birdRight = nextBirdPos.x + BIRD_RADIUS;
-    const birdTop = nextBirdPos.y - BIRD_RADIUS;
-    const birdBottom = nextBirdPos.y + BIRD_RADIUS;
+    // 4. Check for bird collisions (if flying)
+    let finalBlocks = updatedBlocks;
+    let finalPigs = updatedPigs;
+    if (gameState === 'flying') {
+      const birdLeft = nextBirdPos.x - BIRD_RADIUS;
+      const birdRight = nextBirdPos.x + BIRD_RADIUS;
+      const birdTop = nextBirdPos.y - BIRD_RADIUS;
+      const birdBottom = nextBirdPos.y + BIRD_RADIUS;
 
-    // Bird with Blocks
-    let finalBlocks = updatedBlocks.map(block => {
-        if (block.destroyed) return block;
-        const blockLeft = block.x;
-        const blockRight = block.x + block.width;
-        const blockTop = block.y;
-        const blockBottom = block.y + block.height;
+      // Bird with Blocks
+      finalBlocks = updatedBlocks.map(block => {
+          if (block.destroyed) return block;
+          const blockLeft = block.x;
+          const blockRight = block.x + block.width;
+          const blockTop = block.y;
+          const blockBottom = block.y + block.height;
 
-        if (birdRight > blockLeft && birdLeft < blockRight && birdBottom > blockTop && birdTop < birdBottom) {
-            if (!block.destroyed) setScore(s => s + 10);
-            const newBlock = {
-                ...block, destroyed: true,
-                vx: birdVelocity.current.x * 0.5,
-                vy: birdVelocity.current.y * 0.5
-            };
-            birdVelocity.current.x *= 0.4;
-            birdVelocity.current.y *= -0.4;
-            return newBlock;
+          if (birdRight > blockLeft && birdLeft < blockRight && birdBottom > blockTop && birdTop < birdBottom) {
+              if (!block.destroyed) setScore(s => s + 10);
+              const newBlock = {
+                  ...block, destroyed: true,
+                  vx: birdVelocity.current.x * 0.5,
+                  vy: birdVelocity.current.y * 0.5
+              };
+              birdVelocity.current.x *= 0.4;
+              birdVelocity.current.y *= -0.4;
+              return newBlock;
+          }
+          return block;
+      });
+
+      // Bird with Pigs
+      finalPigs = updatedPigs.map(pig => {
+        if (pig.destroyed) return pig;
+        const pigCenterX = pig.x + PIG_RADIUS;
+        const pigCenterY = pig.y + PIG_RADIUS;
+        const dist = Math.sqrt((nextBirdPos.x - pigCenterX)**2 + (nextBirdPos.y - pigCenterY)**2);
+
+        if (dist < BIRD_RADIUS + PIG_RADIUS) {
+            setScore(s => s + 500);
+            birdVelocity.current.x *= 0.2;
+            birdVelocity.current.y *= -0.2;
+            return {...pig, destroyed: true, vx: birdVelocity.current.x, vy: birdVelocity.current.y};
         }
-        return block;
-    });
-
-    // Bird with Pigs
-    let finalPigs = updatedPigs.map(pig => {
-      if (pig.destroyed) return pig;
-      const pigCenterX = pig.x + PIG_RADIUS;
-      const pigCenterY = pig.y + PIG_RADIUS;
-      const dist = Math.sqrt((nextBirdPos.x - pigCenterX)**2 + (nextBirdPos.y - pigCenterY)**2);
-
-      if (dist < BIRD_RADIUS + PIG_RADIUS) {
-          setScore(s => s + 500);
-          birdVelocity.current.x *= 0.2;
-          birdVelocity.current.y *= -0.2;
-          return {...pig, destroyed: true, vx: birdVelocity.current.x, vy: birdVelocity.current.y};
-      }
-      return pig;
-    });
+        return pig;
+      });
+    }
     
+    // 5. Update state
     setBirdPosition(nextBirdPos);
     setBlocks(finalBlocks);
     setPigs(finalPigs);
     
+    // 6. Check for win/loss/next shot
     const allPigsDestroyed = finalPigs.every(p => p.destroyed);
     if(allPigsDestroyed && finalPigs.length > 0) {
         setGameState("success");
         return;
     }
     
-    const shotOver = nextBirdPos.y > GAME_HEIGHT - GROUND_HEIGHT - BIRD_RADIUS || nextBirdPos.x > GAME_WIDTH || nextBirdPos.x < 0;
-
-    if (shotOver) {
-      if (birdsRemaining > 1) {
-        setBirdsRemaining(b => b - 1);
-        prepareNextShot();
-      } else {
-        setGameState(allPigsDestroyed ? "success" : "fail");
+    // Transition from flying to settling
+    if (gameState === 'flying') {
+      const shotOver = nextBirdPos.y > GAME_HEIGHT - GROUND_HEIGHT - BIRD_RADIUS || nextBirdPos.x > GAME_WIDTH || nextBirdPos.x < 0;
+      if (shotOver) {
+        setGameState("settling");
+        settleTimer.current = Date.now();
       }
-      return;
+    }
+    
+    // Check if world has settled
+    if (gameState === 'settling') {
+      const isAnythingMoving = finalBlocks.some(b => Math.hypot(b.vx, b.vy) > 0.1) ||
+                              finalPigs.some(p => !p.destroyed && Math.hypot(p.vx, p.vy) > 0.1);
+
+      if (isAnythingMoving) {
+        settleTimer.current = Date.now(); // Reset settle timer
+      }
+
+      // After 1.5 seconds of no significant movement
+      if (Date.now() - settleTimer.current > 1500) {
+        if (birdsRemaining > 1) {
+          setBirdsRemaining(b => b - 1);
+          prepareNextShot();
+        } else {
+          setGameState(allPigsDestroyed ? "success" : "fail");
+        }
+        return;
+      }
     }
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [birdPosition, blocks, pigs, birdsRemaining, currentLevel.bird]);
+  }, [birdPosition, blocks, pigs, birdsRemaining, currentLevel.bird, gameState]);
 
   useEffect(() => {
-    if (gameState === "flying") {
+    if (gameState === "flying" || gameState === "settling") {
       animationFrameId.current = requestAnimationFrame(gameLoop);
     }
     return () => {
@@ -449,7 +477,7 @@ export default function ChirpShotGame() {
                 <BirdIcon />
               </div>
           )}
-           {gameState === "flying" && (
+           {(gameState === "flying" || gameState === "settling") && (
               <div style={{ position: "absolute", left: birdPosition.x - BIRD_RADIUS, top: birdPosition.y - BIRD_RADIUS, pointerEvents: 'none' }}>
                 <BirdIcon />
               </div>
