@@ -106,27 +106,67 @@ export default function ChirpShotGame() {
     };
     birdPath.current.push(nextBirdPos);
 
-    // 2. Update block physics (only for destroyed blocks)
-    let nextBlocks = blocks.map(block => {
-      if (!block.destroyed) return block;
-      let nextVx = block.vx * 0.99; // friction
-      let nextVy = block.vy + GRAVITY * 0.8;
-      let nextX = block.x + nextVx;
-      let nextY = block.y + nextVy;
+    // 2. Update block physics (including gravity for non-destroyed blocks)
+    let updatedBlocks = blocks.map(block => {
+      let currentBlock = { ...block };
 
-      if (nextY + block.height > GAME_HEIGHT - GROUND_HEIGHT) {
-        nextY = GAME_HEIGHT - GROUND_HEIGHT - block.height;
-        nextVy = -nextVy * 0.3; // bounce
-        nextVx *= 0.8;
+      if (currentBlock.destroyed) {
+        // Physics for destroyed blocks (flying away)
+        currentBlock.vx *= 0.99; // air friction
+        currentBlock.vy += GRAVITY * 0.8;
+      } else {
+        // Apply gravity to all non-destroyed blocks
+        currentBlock.vy += GRAVITY;
       }
-      return { ...block, x: nextX, y: nextY, vx: nextVx, vy: nextVy };
+
+      let nextBlockX = currentBlock.x + currentBlock.vx;
+      let nextBlockY = currentBlock.y + currentBlock.vy;
+      
+      // Ground collision
+      if (nextBlockY + currentBlock.height > GAME_HEIGHT - GROUND_HEIGHT) {
+        nextBlockY = GAME_HEIGHT - GROUND_HEIGHT - currentBlock.height;
+        if (currentBlock.destroyed) {
+            currentBlock.vy = -currentBlock.vy * 0.3; // bounce
+            currentBlock.vx *= 0.8;
+        } else {
+            currentBlock.vy = 0; // stop
+            currentBlock.vx *= 0.95; // friction
+        }
+      }
+
+      // Block-on-block collision for non-destroyed blocks
+      if (!currentBlock.destroyed) {
+        for (const otherBlock of blocks) {
+          if (currentBlock.id === otherBlock.id || otherBlock.destroyed) continue;
+
+          const otherBlockTop = otherBlock.y;
+          const otherBlockLeft = otherBlock.x;
+          const otherBlockRight = otherBlock.x + otherBlock.width;
+          
+          if (
+            nextBlockX + currentBlock.width > otherBlockLeft &&
+            nextBlockX < otherBlockRight && // Horizontal overlap
+            currentBlock.y + currentBlock.height <= otherBlockTop && // Is above
+            nextBlockY + currentBlock.height >= otherBlockTop // Will collide
+          ) {
+            nextBlockY = otherBlockTop - currentBlock.height;
+            currentBlock.vy = 0;
+            currentBlock.vx *= 0.95; // Friction
+            break;
+          }
+        }
+      }
+      
+      currentBlock.x = nextBlockX;
+      currentBlock.y = nextBlockY;
+      
+      return currentBlock;
     });
 
     // 3. Update pig physics
-    let nextPigs = pigs.map(pig => {
+    let updatedPigs = pigs.map(pig => {
       let currentPig = { ...pig };
 
-      // Physics for destroyed pigs (they just fly away)
       if (currentPig.destroyed) {
         currentPig.vx *= 0.99;
         currentPig.vy += GRAVITY;
@@ -135,7 +175,6 @@ export default function ChirpShotGame() {
         return currentPig;
       }
       
-      // Physics for active pigs
       currentPig.vy += GRAVITY;
       let nextY = currentPig.y + currentPig.vy;
       let nextX = currentPig.x + currentPig.vx;
@@ -144,14 +183,12 @@ export default function ChirpShotGame() {
       const pigLeft = nextX;
       const pigRight = nextX + PIG_RADIUS * 2;
 
-      // Check for ground collision
       if (pigBottom > GAME_HEIGHT - GROUND_HEIGHT) {
         nextY = GAME_HEIGHT - GROUND_HEIGHT - PIG_RADIUS * 2;
         currentPig.vy = 0;
       }
 
-      // Check for block collision
-      for (const block of nextBlocks) {
+      for (const block of updatedBlocks) {
         if (block.destroyed) continue;
         const blockTop = block.y;
         const blockLeft = block.x;
@@ -171,21 +208,21 @@ export default function ChirpShotGame() {
       return currentPig;
     });
 
-    // 4. Check for collisions
+    // 4. Check for bird collisions
     const birdLeft = nextBirdPos.x - BIRD_RADIUS;
     const birdRight = nextBirdPos.x + BIRD_RADIUS;
     const birdTop = nextBirdPos.y - BIRD_RADIUS;
     const birdBottom = nextBirdPos.y + BIRD_RADIUS;
 
     // Bird with Blocks
-    nextBlocks = nextBlocks.map(block => {
+    let finalBlocks = updatedBlocks.map(block => {
         if (block.destroyed) return block;
         const blockLeft = block.x;
         const blockRight = block.x + block.width;
         const blockTop = block.y;
         const blockBottom = block.y + block.height;
 
-        if (birdRight > blockLeft && birdLeft < blockRight && birdBottom > blockTop && birdTop < blockBottom) {
+        if (birdRight > blockLeft && birdLeft < blockRight && birdBottom > blockTop && birdTop < birdBottom) {
             if (!block.destroyed) setScore(s => s + 10);
             const newBlock = {
                 ...block, destroyed: true,
@@ -200,7 +237,7 @@ export default function ChirpShotGame() {
     });
 
     // Bird with Pigs
-    nextPigs = nextPigs.map(pig => {
+    let finalPigs = updatedPigs.map(pig => {
       if (pig.destroyed) return pig;
       const pigCenterX = pig.x + PIG_RADIUS;
       const pigCenterY = pig.y + PIG_RADIUS;
@@ -216,11 +253,11 @@ export default function ChirpShotGame() {
     });
     
     setBirdPosition(nextBirdPos);
-    setBlocks(nextBlocks);
-    setPigs(nextPigs);
+    setBlocks(finalBlocks);
+    setPigs(finalPigs);
     
-    const allPigsDestroyed = nextPigs.every(p => p.destroyed);
-    if(allPigsDestroyed && nextPigs.length > 0) {
+    const allPigsDestroyed = finalPigs.every(p => p.destroyed);
+    if(allPigsDestroyed && finalPigs.length > 0) {
         setGameState("success");
         return;
     }
